@@ -1,16 +1,37 @@
 import random
 import hashlib
 import datetime
+import sqlite3
 from prettytable import PrettyTable
 
 class ElectronicVotingSystem:
     def __init__(self):
-        self.voters = []
-        self.votes = []
-        self.feedbacks = []
+        self.connection = sqlite3.connect('voting_system.db')
+        self.create_tables()
         self.candidates = ["Candidate A", "Candidate B", "Candidate C"]
         self.vote_count = {candidate: 0 for candidate in self.candidates}
         self.vote_count['Not Anyone'] = 0  # Option to abstain
+
+    def create_tables(self):
+        cursor = self.connection.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS voters (
+                          id INTEGER PRIMARY KEY,
+                          name TEXT,
+                          age INTEGER,
+                          city TEXT,
+                          state TEXT,
+                          voter_id TEXT UNIQUE)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS votes (
+                          id INTEGER PRIMARY KEY,
+                          voter_id TEXT,
+                          vote TEXT,
+                          timestamp TEXT)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS feedbacks (
+                          id INTEGER PRIMARY KEY,
+                          feedback TEXT)''')
+        self.connection.commit()
 
     def generate_voter_id(self):
         name = input("Enter your name: ")
@@ -23,21 +44,22 @@ class ElectronicVotingSystem:
             return
 
         voter_id = str(random.randint(1000, 9999))
-        while any(voter['voter_id'] == voter_id for voter in self.voters):
+        cursor = self.connection.cursor()
+        while True:
+            cursor.execute("SELECT * FROM voters WHERE voter_id = ?", (voter_id,))
+            if cursor.fetchone() is None:
+                break
             voter_id = str(random.randint(1000, 9999))
 
-        voter_info = {
-            'name': name,
-            'age': age,
-            'city': city,
-            'state': state,
-            'voter_id': voter_id
-        }
-        self.voters.append(voter_info)
+        cursor.execute("INSERT INTO voters (name, age, city, state, voter_id) VALUES (?, ?, ?, ?, ?)",
+                       (name, age, city, state, voter_id))
+        self.connection.commit()
         print(f"Your unique Voter ID is: {voter_id}\n")
 
     def cast_vote(self, voter_id):
-        if any(vote['voter_id'] == voter_id for vote in self.votes):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM votes WHERE voter_id = ?", (voter_id,))
+        if cursor.fetchone() is not None:
             print("You have already voted. Duplicate voting is not allowed.\n")
             return
         
@@ -50,29 +72,26 @@ class ElectronicVotingSystem:
             try:
                 choice = int(input("Enter the number corresponding to your choice: "))
                 if 1 <= choice <= len(self.candidates) + 1:
-                    if choice == len(self.candidates) + 1:
-                        selected_candidate = 'Not Anyone'
-                    else:
-                        selected_candidate = self.candidates[choice - 1]
+                    selected_candidate = 'Not Anyone' if choice == len(self.candidates) + 1 else self.candidates[choice - 1]
                     break
                 else:
                     print("Invalid choice! Please try again.")
             except ValueError:
                 print("Please enter a valid number.")
-        
-        timestamp = datetime.datetime.now()
+
+        timestamp = datetime.datetime.now().isoformat()
         encrypted_vote = self.encrypt_vote(voter_id, selected_candidate, timestamp)
-        self.votes.append({
-            'voter_id': voter_id,
-            'vote': encrypted_vote,
-            'timestamp': timestamp
-        })
+        cursor.execute("INSERT INTO votes (voter_id, vote, timestamp) VALUES (?, ?, ?)",
+                       (voter_id, encrypted_vote, timestamp))
+        self.connection.commit()
         self.vote_count[selected_candidate] += 1
         print("Your vote has been cast successfully.\n")
 
     def leave_feedback(self):
         feedback = input("Please leave your feedback: ")
-        self.feedbacks.append(feedback)
+        cursor = self.connection.cursor()
+        cursor.execute("INSERT INTO feedbacks (feedback) VALUES (?)", (feedback,))
+        self.connection.commit()
         print("Thank you for your feedback!\n")
 
     def encrypt_vote(self, voter_id, vote, timestamp):
@@ -81,24 +100,30 @@ class ElectronicVotingSystem:
         return encrypted_data
 
     def view_registered_voters(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT name, state, voter_id FROM voters")
         table = PrettyTable()
         table.field_names = ["Name", "State", "Voter ID"]
-        for voter in sorted(self.voters, key=lambda x: x['voter_id']):
-            table.add_row([voter['name'], voter['state'], voter['voter_id']])
+        for row in cursor.fetchall():
+            table.add_row(row)
         print("Registered Voters:")
         print(table)
         print()
 
     def view_votes(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT voter_id, vote, timestamp FROM votes")
         print("Votes with Timestamps and Hashes:")
-        for vote in self.votes:
-            print(f"Voter ID: {vote['voter_id']} | Time: {vote['timestamp']} | Hash: {vote['vote']}")
+        for row in cursor.fetchall():
+            print(f"Voter ID: {row[0]} | Time: {row[2]} | Hash: {row[1]}")
         print()
 
     def view_feedbacks(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT feedback FROM feedbacks")
         print("Feedbacks:")
-        for feedback in self.feedbacks:
-            print(f"- {feedback}")
+        for row in cursor.fetchall():
+            print(f"- {row[0]}")
         print()
 
     def tally_votes(self):
@@ -130,7 +155,9 @@ class ElectronicVotingSystem:
                 self.generate_voter_id()
             elif choice == '2':
                 voter_id = input("Enter your Voter ID: ")
-                if any(voter['voter_id'] == voter_id for voter in self.voters):
+                cursor = self.connection.cursor()
+                cursor.execute("SELECT * FROM voters WHERE voter_id = ?", (voter_id,))
+                if cursor.fetchone() is not None:
                     self.cast_vote(voter_id)
                 else:
                     print("Invalid Voter ID! Please generate a valid Voter ID first.\n")
@@ -183,6 +210,7 @@ class ElectronicVotingSystem:
                 self.election_commission_menu()
             elif choice == '0':
                 print("Exiting the system. Thank you!")
+                self.connection.close()
                 break
             else:
                 print("Invalid choice! Please try again.\n")
@@ -190,4 +218,3 @@ class ElectronicVotingSystem:
 if __name__ == "__main__":
     system = ElectronicVotingSystem()
     system.run()
-
